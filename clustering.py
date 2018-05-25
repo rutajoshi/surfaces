@@ -1,6 +1,7 @@
 import matplotlib.pyplot as plt
 import numpy as np
 from sklearn.cluster import KMeans
+import collections
 
 def make_dataset(image):
     """
@@ -31,3 +32,8 @@ def cluster(image, k=4):
 
     # Retrieve centroids
     return y_kmeans
+
+def biggest_cluster(y_kmeans):
+    counter = collections.Counter(y_kmeans)
+    best_cluster = counter.most_common(1)[0][0]
+    return best_cluster
