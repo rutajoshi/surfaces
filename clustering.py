@@ -16,6 +16,7 @@ def make_dataset(image):
 
 def cluster(image, k=4):
     # Make dataset
+    # If you have a DepthImage, use image._data instead of making a dataset
     X = make_dataset(image)
     # Cluster data
     kmeans = KMeans(n_clusters=k)
