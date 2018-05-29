@@ -1,0 +1,4 @@
+# These may not all be install-able through pip install -r requirements.txt
+# Python PCL requires some system intalls (apt-get for Ubuntu-based systems)
+numpy==1.14.3
+python-pcl==0.3
