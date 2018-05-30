@@ -1,11 +1,11 @@
+# General imports
 import numpy as np
-# Point cloud library 
 import pdb
+import cv2
+
+# Point cloud library 
 import pcl
 import pcl.pcl_visualization
-
-# Opencv 
-import cv2
 
 # Autolab
 from autolab_core import PointCloud
@@ -25,7 +25,6 @@ pc = ci.deproject(di)
 vis2d.figure()
 vis2d.imshow(di)
 vis2d.show()
-#
 ## Visualize the point cloud
 #vis3d.figure()
 #vis3d.points(pc)
