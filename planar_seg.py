@@ -44,6 +44,8 @@ indices, model = seg.segment()
 #pdb.set_trace()
 vis3d.figure()
 pc_plane = pc.data.T[indices]
+#others = np.arange(len(pc.data.T))
+#other_indices = np.where(others not in indices)
 #other_indices = np.array([i for i in range(len(pc.data.T)) if i not in indices])
 #pc_other = pc.data.T[other_indices]
 vis3d.points(pc_plane, color=(1,0,0))
