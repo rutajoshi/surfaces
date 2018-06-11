@@ -3,11 +3,11 @@ import numpy as np
 import pdb
 import cv2
 
-# Point cloud library 
+# Point cloud library imports
 import pcl
 import pcl.pcl_visualization
 
-# Autolab
+# Autolab imports
 from autolab_core import PointCloud
 from perception import DepthImage, CameraIntrinsics
 from visualization import Visualizer3D as vis3d

@@ -23,3 +23,5 @@ translation = np.asarray(best_pose[:3, 3])
 rt = RigidTransform(rotation, translation, from_frame='obj', to_frame='world')
 vis3d.mesh(bc, rt)
 vis3d.show()
+
+# TODO: Project the mesh onto the plane defined by the largest flat surface in the bin
