@@ -50,7 +50,7 @@ def visualize(pc, indices, color=(1,0,0)):
 
 # 2. Partition the point cloud of the bin into a 2d grid
 def partition_surface(pc, indices, xsplits, ysplits):
-
+    return None
 
 # 3. Given an object mesh, find stable poses
 def find_stable_poses(mesh_file):
