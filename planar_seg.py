@@ -2,6 +2,7 @@
 import numpy as np
 import pdb
 import cv2
+import sys
 
 # Point cloud library imports
 import pcl
@@ -22,13 +23,9 @@ di = DepthImage(image, frame=ci.frame)
 pc = ci.deproject(di)
 
 ## Visualize the depth image
-vis2d.figure()
-vis2d.imshow(di)
-vis2d.show()
-## Visualize the point cloud
-#vis3d.figure()
-#vis3d.points(pc)
-#vis3d.show()
+#vis2d.figure()
+#vis2d.imshow(di)
+#vis2d.show()
 
 
 # Make and display a PCL type point cloud from the image
@@ -40,15 +37,18 @@ seg.set_model_type(pcl.SACMODEL_PARALLEL_PLANE)
 seg.set_method_type(pcl.SAC_RANSAC)
 seg.set_distance_threshold(0.005)
 indices, model = seg.segment()
+print(model)
+
 
 #pdb.set_trace()
 vis3d.figure()
 pc_plane = pc.data.T[indices]
-#others = np.arange(len(pc.data.T))
-#other_indices = np.where(others not in indices)
-#other_indices = np.array([i for i in range(len(pc.data.T)) if i not in indices])
-#pc_other = pc.data.T[other_indices]
+pc_plane = pc_plane[np.where(pc_plane[::,1] < 0.16)]
+
+maxes = np.max(pc_plane, axis=0)
+mins = np.min(pc_plane, axis=0)
+print('maxes are :', maxes ,'\nmins are : ', mins)
+
 vis3d.points(pc_plane, color=(1,0,0))
-#vis3d.points(pc_other, color=(0,1,0))
 vis3d.show()
 
