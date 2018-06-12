@@ -50,6 +50,7 @@ def visualize(pc, indices, color=(1,0,0)):
 
 """ 2. Partition the point cloud of the bin into a 2d grid """
 def partition_surface(pc, indices, model, xsplits, ysplits):
+    # TODO: finish this
     return None
 
 """ 3. Given an object mesh, find stable poses """
@@ -62,15 +63,15 @@ def find_stable_poses(mesh_file):
     i, value = max(enumerate(probs), key=operator.itemgetter(1))
     best_pose = stable_poses[i]
     # Visualize the mesh in the most probable stable state
-    # rotation = np.asarray(best_pose[:3, :3])
-    # translation = np.asarray(best_pose[:3, 3])
-    # rt = RigidTransform(rotation, translation, from_frame='obj', to_frame='world')
+    rotation = np.asarray(best_pose[:3, :3])
+    translation = np.asarray(best_pose[:3, 3])
+    rt = RigidTransform(rotation, translation, from_frame='obj', to_frame='world')
     # vis3d.mesh(mesh, rt)
     # vis3d.show()
-    return mesh, rt, best_pose
+    return mesh, best_pose, rt
 
-""" 4. Given the object in the stable pose, find the footprint on a given cell given the cell plane """
-def find_footprint(mesh, rt, best_pose, plane_normal):
+""" 4. Given the object in the stable pose, find the shadow of the convex hull """
+def find_shadow(mesh, best_pose, plane_normal):
     ch = mesh.convex_hull
     ch = ch.apply_transform(best_pose)
     faces_to_keep, fn_to_keep = [], []
@@ -90,6 +91,34 @@ def score_cells(pc, indices, model, shadow):
     length, width, height = shadow.extents()
     split_size = max(length, width)
     # go through all the cells, assuming that the mesh is on the same scale as the bin
-    for i in range(
+    # TODO: finish this
+    pc_plane = pc.data.T[indices]
+    pc_plane = pc_plane[np.where(pc_plane[::,1] < 0.16)] # remove the empty space before the start of the bin (applies only to the yumi)
+    maxes = np.max(pc_plane, axis=0)
+    mins = np.min(pc_plane, axis=0)
+    for i in range((maxes[0]-mins[0])/split_size):
+        x = mins[0] + i*split_size
+        for j in range((maxes[1]-mins[1])/split_size):
+            y = mins[1] + j*split_size
+            #do stuff using the cell here
+    return None
 
 """ 6. Return the cell with the highest score """
+# TODO: finish this
+
+""" Main """
+def main():
+    img_file = '/nfs/diskstation/projects/dex-net/placing/datasets/real/sample_ims_05_22/depth_ims_numpy/image_000001.npy'
+    ci_file = '/nfs/diskstation/projects/dex-net/placing/datasets/real/sample_ims_05_22/camera_intrinsics.intr'
+    mesh_file = 'demon_helmet.obj'
+
+    indices, model, image, pc = largest_planar_surface(img_file, ci_file)
+    mesh, best_pose, rt = find_stable_poses(mesh_file)
+    shadow = find_shadow(mesh, best_pose, model[0:3])
+
+    vis3d.mesh(shadow, rt)
+    vis3d.show()
+
+
+if __name__ == "__main__": main()
+
