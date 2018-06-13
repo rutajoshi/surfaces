@@ -4,6 +4,7 @@ import pdb
 import cv2
 import trimesh
 import operator
+import IPython
 
 # Point cloud library imports
 import pcl
@@ -88,7 +89,7 @@ def find_shadow(mesh, best_pose, plane_normal):
 
 """ 5. Score each cell given the footprint and other metrics """
 def score_cells(pc, indices, model, shadow):
-    length, width, height = shadow.extents()
+    length, width, height = shadow.extents
     split_size = max(length, width)
     # go through all the cells, assuming that the mesh is on the same scale as the bin
     # TODO: finish this
@@ -96,15 +97,39 @@ def score_cells(pc, indices, model, shadow):
     pc_plane = pc_plane[np.where(pc_plane[::,1] < 0.16)] # remove the empty space before the start of the bin (applies only to the yumi)
     maxes = np.max(pc_plane, axis=0)
     mins = np.min(pc_plane, axis=0)
-    for i in range((maxes[0]-mins[0])/split_size):
+    bin_base = (mins[2]+maxes[2])/2
+    scores = np.zeros((int(np.round((maxes[0]-mins[0])/split_size)), int(np.round((maxes[1]-mins[1])/split_size))))
+    # Compute score for each cell
+    for i in range(int(np.round((maxes[0]-mins[0])/split_size))):
         x = mins[0] + i*split_size
-        for j in range((maxes[1]-mins[1])/split_size):
+        for j in range(int(np.round((maxes[1]-mins[1])/split_size))):
             y = mins[1] + j*split_size
-            #do stuff using the cell here
-    return None
+            # translate the mesh to the center of the cell
+            mesh_centroid = shadow.centroid
+            cell_centroid = np.array([x + (split_size / 2), y + (split_size / 2), bin_base])
+            translation = cell_centroid - mesh_centroid
+            untranslation = -1 * translation
+            shadow.apply_translation(translation)
+
+            # find the number of points in the pc data that are within the extents of the shadow
+            minx, maxx = cell_centroid[0] - (length / 2), cell_centroid[0] + (length / 2)
+            miny, maxy = cell_centroid[1] - (width / 2), cell_centroid[1] + (width / 2)
+            intersecting_pts = pc_plane[minx < pc_plane[:,0]]
+            intersecting_pts = intersecting_pts[intersecting_pts[:,0] < maxx]
+            intersecting_pts = intersecting_pts[miny < intersecting_pts[:,1]]
+            intersecting_pts = intersecting_pts[intersecting_pts[:,1] < maxy]
+
+            # if the number of points is high, then this cell gets a higher score (clutter is ignored by the model)
+            scores[i][j] = len(intersecting_pts)
+
+            # un-translate the mesh before the next iteration
+            shadow.apply_translation(untranslation)
+    return scores, split_size
 
 """ 6. Return the cell with the highest score """
-# TODO: finish this
+def best_cell(scores):
+    ind = np.unravel_index(np.argmax(scores, axis=None), scores.shape)
+    return ind # tuple
 
 """ Main """
 def main():
@@ -116,8 +141,11 @@ def main():
     mesh, best_pose, rt = find_stable_poses(mesh_file)
     shadow = find_shadow(mesh, best_pose, model[0:3])
 
-    vis3d.mesh(shadow, rt)
-    vis3d.show()
+    #vis3d.mesh(shadow, rt)
+    #vis3d.show()
+
+    scores, split_size = score_cells(pc, indices, model, shadow)
+    ind = best_cell(scores)
 
 
 if __name__ == "__main__": main()
