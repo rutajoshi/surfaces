@@ -49,12 +49,7 @@ def visualize(pc, indices, color=(1,0,0)):
     vis3d.points(pc_plane, color=(1,0,0))
     vis3d.show()
 
-""" 2. Partition the point cloud of the bin into a 2d grid """
-def partition_surface(pc, indices, model, xsplits, ysplits):
-    # TODO: finish this
-    return None
-
-""" 3. Given an object mesh, find stable poses """
+""" 2. Given an object mesh, find stable poses """
 def find_stable_poses(mesh_file):
     # Load the mesh and compute stable poses
     mesh = trimesh.load(mesh_file)
@@ -71,7 +66,7 @@ def find_stable_poses(mesh_file):
     # vis3d.show()
     return mesh, best_pose, rt
 
-""" 4. Given the object in the stable pose, find the shadow of the convex hull """
+""" 3. Given the object in the stable pose, find the shadow of the convex hull """
 def find_shadow(mesh, best_pose, plane_normal):
     ch = mesh.convex_hull
     ch = ch.apply_transform(best_pose)
@@ -87,7 +82,7 @@ def find_shadow(mesh, best_pose, plane_normal):
     shadow.fix_normals()
     return shadow
 
-""" 5. Score each cell given the footprint and other metrics """
+""" 4. Score each cell given the footprint and other metrics """
 def score_cells(pc, indices, model, shadow):
     length, width, height = shadow.extents
     split_size = max(length, width)
@@ -118,15 +113,38 @@ def score_cells(pc, indices, model, shadow):
             intersecting_pts = intersecting_pts[intersecting_pts[:,0] < maxx]
             intersecting_pts = intersecting_pts[miny < intersecting_pts[:,1]]
             intersecting_pts = intersecting_pts[intersecting_pts[:,1] < maxy]
+            vis3d.points(pc_plane, color=(0,1,0))
+            vis3d.points(intersecting_pts, color=(1,0,0))
+            vis3d.mesh(shadow)
+            vis3d.show()
 
             # if the number of points is high, then this cell gets a higher score (clutter is ignored by the model)
-            scores[i][j] = len(intersecting_pts)
+            scores[i][j] = score(intersecting_pts, shadow)
 
             # un-translate the mesh before the next iteration
             shadow.apply_translation(untranslation)
     return scores, split_size
 
-""" 6. Return the cell with the highest score """
+""" Score the cell using the points in that cell from the planar surface that intersect with the shadow """
+def score(intersecting_pts, shadow):
+    # Fit a plane to the points in the cell that intersect with the shadow
+    # Make a PCL type point cloud from the image
+    p = pcl.PointCloud(intersecting_pts.astype(np.float32))
+    # Make a segmenter and segment the point cloud.
+    seg = p.make_segmenter()
+    seg.set_model_type(pcl.SACMODEL_PARALLEL_PLANE)
+    seg.set_method_type(pcl.SAC_RANSAC)
+    seg.set_distance_threshold(0.005)
+    indices, model = seg.segment()
+    
+    # score = dot product of plane normal to face normal of the shadow
+    fn = shadow.face_normals[3] # TODO: figure out which normal is the right one to use
+    score = np.dot(fn, model[0:3])
+
+    # score = len(intersecting_pts)
+    return score
+
+""" 5. Return the cell with the highest score """
 def best_cell(scores):
     ind = np.unravel_index(np.argmax(scores, axis=None), scores.shape)
     return ind # tuple
@@ -146,6 +164,8 @@ def main():
 
     scores, split_size = score_cells(pc, indices, model, shadow)
     ind = best_cell(scores)
+    print("Scores: \n" + str(scores))
+    print("\nBest cell = " + str(ind))
 
 
 if __name__ == "__main__": main()
