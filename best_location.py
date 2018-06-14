@@ -5,6 +5,7 @@ import cv2
 import trimesh
 import operator
 import IPython
+import math
 
 # Point cloud library imports
 import pcl
@@ -82,6 +83,18 @@ def find_shadow(mesh, best_pose, plane_normal):
     shadow.fix_normals()
     return shadow
 
+def rotations(shadow, n):
+    theta = (360 / n) * (2 * math.pi / 360) 
+    r = np.array([[math.cos(theta), -1*math.sin(theta), 0, 0],
+                      [math.sin(theta), math.cos(theta), 0, 0],
+                      [0, 0, 1, 0],
+                      [0, 0, 0, 0]])
+    rotated_shadows = [shadow]
+    for i in range(1,n):
+        shadow.apply_transform(r)
+        rotated_shadows.append(shadow)
+    return rotated_shadows
+
 """ 4. Score each cell given the footprint and other metrics """
 def score_cells(pc, indices, model, shadow):
     length, width, height = shadow.extents
@@ -90,10 +103,13 @@ def score_cells(pc, indices, model, shadow):
     # TODO: finish this
     pc_plane = pc.data.T[indices]
     pc_plane = pc_plane[np.where(pc_plane[::,1] < 0.16)] # remove the empty space before the start of the bin (applies only to the yumi)
+    pc_all = pc.data.T
     maxes = np.max(pc_plane, axis=0)
     mins = np.min(pc_plane, axis=0)
     bin_base = (mins[2]+maxes[2])/2
     scores = np.zeros((int(np.round((maxes[0]-mins[0])/split_size)), int(np.round((maxes[1]-mins[1])/split_size))))
+    scores_all = np.zeros((int(np.round((maxes[0]-mins[0])/split_size)), int(np.round((maxes[1]-mins[1])/split_size))))
+    scores_dp = np.zeros((int(np.round((maxes[0]-mins[0])/split_size)), int(np.round((maxes[1]-mins[1])/split_size))))
     # Compute score for each cell
     for i in range(int(np.round((maxes[0]-mins[0])/split_size))):
         x = mins[0] + i*split_size
@@ -106,27 +122,96 @@ def score_cells(pc, indices, model, shadow):
             untranslation = -1 * translation
             shadow.apply_translation(translation)
 
-            # find the number of points in the pc data that are within the extents of the shadow
-            minx, maxx = cell_centroid[0] - (length / 2), cell_centroid[0] + (length / 2)
-            miny, maxy = cell_centroid[1] - (width / 2), cell_centroid[1] + (width / 2)
-            intersecting_pts = pc_plane[minx < pc_plane[:,0]]
-            intersecting_pts = intersecting_pts[intersecting_pts[:,0] < maxx]
-            intersecting_pts = intersecting_pts[miny < intersecting_pts[:,1]]
-            intersecting_pts = intersecting_pts[intersecting_pts[:,1] < maxy]
-            vis3d.points(pc_plane, color=(0,1,0))
-            vis3d.points(intersecting_pts, color=(1,0,0))
-            vis3d.mesh(shadow)
-            vis3d.show()
+            # find the number of points in the pc data that are within the cell and the plane
+            pc_cell_plane = pc_plane[x < pc_plane[:,0]]
+            pc_cell_plane = pc_cell_plane[pc_cell_plane[:,0] < (x + split_size)]
+            pc_cell_plane = pc_cell_plane[y < pc_cell_plane[:,1]]
+            pc_cell_plane = pc_cell_plane[pc_cell_plane[:,1] < (y + split_size)]
 
-            # if the number of points is high, then this cell gets a higher score (clutter is ignored by the model)
-            scores[i][j] = score(intersecting_pts, shadow)
+            # find the number of points that are in the 3d cell
+            pc_cell = pc_all[x < pc_all[:,0]]
+            pc_cell = pc_cell[pc_cell[:,0] < (x + split_size)]
+            pc_cell = pc_cell[y < pc_cell[:,1]]
+            pc_cell = pc_cell[pc_cell[:,1] < (y + split_size)]
+
+            # retrieve a score based on number of points in the cell and plane within shadow extents
+            intersecting_pts, score_planei = rotational_high_score(8, score_plane_intersection, pc_cell_plane, cell_centroid, shadow)
+            scores[i][j] = score_planei
+            #vis3d.points(pc_plane, color=(0,1,0))
+            #vis3d.points(intersecting_pts, color=(1,0,0))
+            #vis3d.mesh(shadow)
+            #vis3d.show()
+
+            intersecting_pts, score_totali = rotational_high_score(8, score_total_intersection, pc_cell, cell_centroid, shadow)
+            scores_all[i][j] = score_totali
+            #vis3d.points(pc_all, color=(0,1,0))
+            #vis3d.points(intersecting_pts, color=(1,0,0))
+            #vis3d.mesh(shadow)
+            #vis3d.show()
+
+            indices, score_dp = rotational_high_score(8, score_cell_planefit, pc_cell, cell_centroid, shadow)
+            scores_dp[i][j] = score_dp
 
             # un-translate the mesh before the next iteration
             shadow.apply_translation(untranslation)
+    print("\nScores [plane]: \n" + str(scores))
+    best_plane = best_cell(scores)
+    print("\nBest cell [plane] = " + str(best_plane))
+    print("\nScores [total]: \n" + str(scores_all))
+    best_all = best_cell(scores_all)
+    print("\nBest cell [total] = " + str(best_all))
+    print("\nScores [dot product]: \n" + str(scores_dp))
+    best_dp = best_cell(scores_dp)
+    print("\nBest cell [dot product] = " + str(best_dp))
     return scores, split_size
 
+def rotational_high_score(n, scoring_function, pc_cell, cell_centroid, shadow):
+    rotated_shadows = rotations(shadow, n)
+    intersecting_pts_arrays = []
+    scores = []
+    for sh in rotated_shadows:
+        ip, score = scoring_function(pc_cell, cell_centroid, sh)
+        scores.append(score)
+        intersecting_pts_arrays.append(ip)
+    i = np.argmax(scores)
+    return intersecting_pts_arrays[i], scores[i]
+
+def score_plane_intersection(cell_pc, cell_centroid, shadow):
+    """
+    The score of this cell is the number of points that intersect with the plane.
+    Assumes that the cell_pc is the set of all points in both the plane and the cell.
+    
+    The score is higher if more points intersect (since clutter and box edges are not in the flat plane, they don't intersect).
+    """
+    length, width, height = shadow.extents
+    minx, maxx = cell_centroid[0] - (length / 2), cell_centroid[0] + (length / 2)
+    miny, maxy = cell_centroid[1] - (width / 2), cell_centroid[1] + (width / 2)
+    intersecting_pts = cell_pc[minx < cell_pc[:,0]]
+    intersecting_pts = intersecting_pts[intersecting_pts[:,0] < maxx]
+    intersecting_pts = intersecting_pts[miny < intersecting_pts[:,1]]
+    intersecting_pts = intersecting_pts[intersecting_pts[:,1] < maxy]
+    return intersecting_pts, len(intersecting_pts)
+
+def score_total_intersection(cell_pc, cell_centroid, shadow):
+    """
+    The score of this cell is the number of points that intersect.
+    Assumes that the cell_pc is the cell of the full point cloud.
+
+    The score is higher if fewer points intersect (since clutter and box edges intersect with the object as well.
+    Return -1*len(intersecting points)
+    """
+    length, width, height = shadow.extents
+    minx, maxx = cell_centroid[0] - (length / 2), cell_centroid[0] + (length / 2)
+    miny, maxy = cell_centroid[1] - (width / 2), cell_centroid[1] + (width / 2)
+    intersecting_pts = cell_pc[minx < cell_pc[:,0]]
+    intersecting_pts = intersecting_pts[intersecting_pts[:,0] < maxx]
+    intersecting_pts = intersecting_pts[miny < intersecting_pts[:,1]]
+    intersecting_pts = intersecting_pts[intersecting_pts[:,1] < maxy]
+    return intersecting_pts, -1*len(intersecting_pts)
+
 """ Score the cell using the points in that cell from the planar surface that intersect with the shadow """
-def score(intersecting_pts, shadow):
+def score_cell_planefit(cell_pc, cell_centroid, shadow):
+    intersecting_pts, len_of_those = score_total_intersection(cell_pc, cell_centroid, shadow)
     # Fit a plane to the points in the cell that intersect with the shadow
     # Make a PCL type point cloud from the image
     p = pcl.PointCloud(intersecting_pts.astype(np.float32))
@@ -140,9 +225,7 @@ def score(intersecting_pts, shadow):
     # score = dot product of plane normal to face normal of the shadow
     fn = shadow.face_normals[3] # TODO: figure out which normal is the right one to use
     score = np.dot(fn, model[0:3])
-
-    # score = len(intersecting_pts)
-    return score
+    return indices, score
 
 """ 5. Return the cell with the highest score """
 def best_cell(scores):
@@ -164,8 +247,8 @@ def main():
 
     scores, split_size = score_cells(pc, indices, model, shadow)
     ind = best_cell(scores)
-    print("Scores: \n" + str(scores))
-    print("\nBest cell = " + str(ind))
+    # print("Scores: \n" + str(scores))
+    # print("\nBest cell = " + str(ind))
 
 
 if __name__ == "__main__": main()
