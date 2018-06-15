@@ -1,4 +1,5 @@
 # General imports
+from __future__ import division
 import numpy as np
 import pdb
 import cv2
@@ -107,9 +108,13 @@ def score_cells(pc, indices, model, shadow):
     maxes = np.max(pc_plane, axis=0)
     mins = np.min(pc_plane, axis=0)
     bin_base = (mins[2]+maxes[2])/2
+    
     scores = np.zeros((int(np.round((maxes[0]-mins[0])/split_size)), int(np.round((maxes[1]-mins[1])/split_size))))
     scores_all = np.zeros((int(np.round((maxes[0]-mins[0])/split_size)), int(np.round((maxes[1]-mins[1])/split_size))))
     scores_dp = np.zeros((int(np.round((maxes[0]-mins[0])/split_size)), int(np.round((maxes[1]-mins[1])/split_size))))
+    weighted_scores = np.zeros((int(np.round((maxes[0]-mins[0])/split_size)), int(np.round((maxes[1]-mins[1])/split_size))))
+    weights = np.array([1/3, 1/3, 1/3])
+
     # Compute score for each cell
     for i in range(int(np.round((maxes[0]-mins[0])/split_size))):
         x = mins[0] + i*split_size
@@ -151,9 +156,12 @@ def score_cells(pc, indices, model, shadow):
 
             indices, score_dp = rotational_high_score(8, score_cell_planefit, pc_cell, cell_centroid, shadow)
             scores_dp[i][j] = score_dp
+            
+            weighted_scores[i][j] = np.dot(np.array([score_planei, score_totali, score_dp]), weights)
 
             # un-translate the mesh before the next iteration
             shadow.apply_translation(untranslation)
+    
     print("\nScores [plane]: \n" + str(scores))
     best_plane = best_cell(scores)
     print("\nBest cell [plane] = " + str(best_plane))
@@ -163,6 +171,10 @@ def score_cells(pc, indices, model, shadow):
     print("\nScores [dot product]: \n" + str(scores_dp))
     best_dp = best_cell(scores_dp)
     print("\nBest cell [dot product] = " + str(best_dp))
+
+    print("\n\nWeighted scores:\n" + str(weighted_scores))
+    best_weighted = best_cell(weighted_scores)
+    print("\nBest cell [weighted] = " + str(best_weighted))
     return scores, split_size
 
 def rotational_high_score(n, scoring_function, pc_cell, cell_centroid, shadow):
