@@ -7,6 +7,7 @@ import trimesh
 import operator
 import IPython
 import math
+import time
 
 # Point cloud library imports
 import pcl
@@ -25,6 +26,8 @@ bin from the depth image.
 @author: Ruta Joshi
 """
 
+ci = CameraIntrinsics.load('/nfs/diskstation/projects/dex-net/placing/datasets/real/sample_ims_05_22/camera_intrinsics.intr')
+
 """ 1. Given depth image of bin, retrieve largest planar surface """
 def largest_planar_surface(filename, cam_int_file):
     # Load the image as a numpy array and the camera intrinsics
@@ -32,6 +35,7 @@ def largest_planar_surface(filename, cam_int_file):
     ci = CameraIntrinsics.load(cam_int_file)
     # Create and deproject a depth image of the data using the camera intrinsics
     di = DepthImage(image, frame=ci.frame)
+    di = di.inpaint()
     pc = ci.deproject(di)
     # Make a PCL type point cloud from the image
     p = pcl.PointCloud(pc.data.T.astype(np.float32))
@@ -58,15 +62,22 @@ def find_clutter(pc, indices, cam_int_file):
     ci = CameraIntrinsics.load(cam_int_file)
     plane_pc = PointCloud(plane_pc_data.T, pc.frame)
     di = ci.project_to_image(plane_pc)
+    vis2d.figure()
+    vis2d.imshow(di)
+    vis2d.show()
     inv_pixel_mask = di.invalid_pixel_mask()
-    #print(inv_pixel_mask.data)
+    vis2d.figure()
+    vis2d.imshow(inv_pixel_mask)
+    vis2d.show()
+    #print(inv_pixel_mask.data[inv_pixel_mask.data.shape[0]//2][inv_pixel_mask.data.shape[1]//2])
     clutter = []
     for r in range(len(inv_pixel_mask.data)):
         for c in range(len(inv_pixel_mask.data[r])):
-            if inv_pixel_mask.data[r][c] != 0:
+            if inv_pixel_mask.data[r][c] > 0:
                 i = r * len(inv_pixel_mask.data[r]) + c
                 clutter.append(i)
     return pc.data.T[clutter]
+    
 
 """ 2. Given an object mesh, find stable poses """
 def find_stable_poses(mesh_file):
@@ -126,6 +137,7 @@ def score_cells(pc, indices, model, shadow, cam_int_file):
     mins = np.min(pc_plane, axis=0)
     bin_base = (mins[2]+maxes[2])/2
     clutter = find_clutter(pc, indices, cam_int_file)
+    print("Len of clutter = " + str(len(clutter)))
     
     scores = np.zeros((int(np.round((maxes[0]-mins[0])/split_size)), int(np.round((maxes[1]-mins[1])/split_size))))
     scores_all = np.zeros((int(np.round((maxes[0]-mins[0])/split_size)), int(np.round((maxes[1]-mins[1])/split_size))))
@@ -133,7 +145,7 @@ def score_cells(pc, indices, model, shadow, cam_int_file):
     weighted_scores = np.zeros((int(np.round((maxes[0]-mins[0])/split_size)), int(np.round((maxes[1]-mins[1])/split_size))))
     weights = np.array([1/3, 1/3, 1/3])
     
-    print("Clutter:\n" + str(clutter))
+    #print("Clutter:\n" + str(clutter))
 
     # Compute score for each cell
     for i in range(int(np.round((maxes[0]-mins[0])/split_size))):
@@ -160,21 +172,21 @@ def score_cells(pc, indices, model, shadow, cam_int_file):
             pc_cell = pc_cell[pc_cell[:,1] < (y + split_size)]
 
             # retrieve a score based on number of points in the cell and plane within shadow extents
-            intersecting_pts, score_planei = rotational_high_score(8, score_plane_intersection, pc_cell_plane, cell_centroid, shadow, clutter)
+            intersecting_pts, score_planei = rotational_high_score(8, score_plane_intersection, pc, pc_cell_plane, cell_centroid, shadow, clutter)
             scores[i][j] = score_planei
             #vis3d.points(pc_plane, color=(0,1,0))
             #vis3d.points(intersecting_pts, color=(1,0,0))
             #vis3d.mesh(shadow)
             #vis3d.show()
 
-            intersecting_pts, score_totali = rotational_high_score(8, score_total_intersection, pc_cell, cell_centroid, shadow, clutter)
+            intersecting_pts, score_totali = rotational_high_score(8, score_total_intersection, pc, pc_cell, cell_centroid, shadow, clutter)
             scores_all[i][j] = score_totali
             #vis3d.points(pc_all, color=(0,1,0))
             #vis3d.points(intersecting_pts, color=(1,0,0))
             #vis3d.mesh(shadow)
             #vis3d.show()
 
-            indices, score_dp = rotational_high_score(8, score_cell_planefit, pc_cell, cell_centroid, shadow, clutter)
+            indices, score_dp = rotational_high_score(8, score_cell_planefit, pc, pc_cell, cell_centroid, shadow, clutter)
             scores_dp[i][j] = score_dp
             
             weighted_scores[i][j] = np.dot(np.array([score_planei, score_totali, score_dp]), weights)
@@ -197,18 +209,18 @@ def score_cells(pc, indices, model, shadow, cam_int_file):
     print("\nBest cell [weighted] = " + str(best_weighted))
     return scores, split_size
 
-def rotational_high_score(n, scoring_function, pc_cell, cell_centroid, shadow, clutter):
+def rotational_high_score(n, scoring_function, pc, pc_cell, cell_centroid, shadow, clutter):
     rotated_shadows = rotations(shadow, n)
     intersecting_pts_arrays = []
     scores = []
     for sh in rotated_shadows:
-        ip, score = scoring_function(pc_cell, cell_centroid, sh, clutter)
+        ip, score = scoring_function(pc, pc_cell, cell_centroid, sh, clutter)
         scores.append(score)
         intersecting_pts_arrays.append(ip)
     i = np.argmax(scores)
     return intersecting_pts_arrays[i], scores[i]
 
-def score_plane_intersection(cell_pc, cell_centroid, shadow, clutter):
+def score_plane_intersection(pc, cell_pc, cell_centroid, shadow, clutter):
     """
     The score of this cell is the number of points that intersect with the plane.
     Assumes that the cell_pc is the set of all points in both the plane and the cell.
@@ -222,12 +234,68 @@ def score_plane_intersection(cell_pc, cell_centroid, shadow, clutter):
     intersecting_pts = intersecting_pts[intersecting_pts[:,0] < maxx]
     intersecting_pts = intersecting_pts[miny < intersecting_pts[:,1]]
     intersecting_pts = intersecting_pts[intersecting_pts[:,1] < maxy]
+    
+    #clutter = clutter.data.T
+    clutter = clutter[minx < clutter[:,0]]
+    clutter = clutter[clutter[:,0] < maxx]
+    clutter = clutter[miny < clutter[:,1]]
+    clutter = clutter[clutter[:,1] < maxy]
+
+    if len(clutter) == 0:
+        return intersecting_pts, len(intersecting_pts)
+
+    #print("Int pts shape = " + str(intersecting_pts.shape))
+    #print("clutter shape = " + str(clutter.shape))
+    #print("Clutter: " + str(clutter))
+
+    clutter_pts = np.in1d(intersecting_pts, clutter)
+    if (len(clutter_pts) % 3 != 0):
+        print("Int pts shape = " + str(intersecting_pts.shape))
+        print("clutter shape = " + str(clutter.shape))
+        print("Clutter pts shape = " + str(clutter_pts.shape))
+
+    clutter_pts.shape = (len(clutter_pts)//3, 3)
+    if len(clutter_pts) == 0:
+        return intersecting_pts, len(intersecting_pts)
+    clutter_pts = np.apply_along_axis(np.all, 1, clutter_pts)
+
+    int_pts_pc = PointCloud(intersecting_pts.T, pc.frame)
+    clutter_pc = PointCloud(clutter.T, pc.frame)
+    di = ci.project_to_image(int_pts_pc)
+    clutter_di = ci.project_to_image(clutter_pc)
+    bi = di.invalid_pixel_mask()
+    diff = bi.diff_with_target(clutter_di)
+    
+    vis2d.figure()
+    vis2d.imshow(clutter)
+    vis2d.imshow(diff)
+    vis2d.show()
+
+    #print("Length of clutter pts = " + str(len(clutter_pts)))
+    return intersecting_pts, -1*len(clutter_pts)
+
+    """
+    int_pts_pc = PointCloud(intersecting_pts.T, pc.frame)
+    clutter_pc = PointCloud(clutter.T, pc.frame)
+    di = ci.project_to_image(int_pts_pc)
+    clutter_di = ci.project_to_image(clutter_pc)
+    bi = di.invalid_pixel_mask()
+    diff = bi.diff_with_target(clutter_di)
+
+    vis2d.figure()
+    #vis2d.imshow(clutter)
+    vis2d.imshow(diff)
+    vis2d.show()
+
+    
     for i in intersecting_pts:
         if i in clutter:
-            return intersecting_pts, 0
+            return intersecting_pts, 0        
     return intersecting_pts, len(intersecting_pts)
+    """
+    
 
-def score_total_intersection(cell_pc, cell_centroid, shadow, clutter):
+def score_total_intersection(pc, cell_pc, cell_centroid, shadow, clutter):
     """
     The score of this cell is the number of points that intersect.
     Assumes that the cell_pc is the cell of the full point cloud.
@@ -242,17 +310,52 @@ def score_total_intersection(cell_pc, cell_centroid, shadow, clutter):
     intersecting_pts = intersecting_pts[intersecting_pts[:,0] < maxx]
     intersecting_pts = intersecting_pts[miny < intersecting_pts[:,1]]
     intersecting_pts = intersecting_pts[intersecting_pts[:,1] < maxy]
+   
+    #clutter = clutter.data.T
+    clutter = clutter[minx < clutter[:,0]]
+    clutter = clutter[clutter[:,0] < maxx]
+    clutter = clutter[miny < clutter[:,1]]
+    clutter = clutter[clutter[:,1] < maxy]
+    
+    if len(clutter) == 0:
+        return intersecting_pts, len(intersecting_pts)
+
+    #print("Int pts shape = " + str(intersecting_pts.shape))
+    #print("clutter shape = " + str(clutter.shape))
+
+    clutter_pts = np.in1d(intersecting_pts, clutter)
+    clutter_pts.shape = (len(clutter_pts)//3, 3)
+    if len(clutter_pts) == 0:
+        return intersecting_pts, len(intersecting_pts)
+    clutter_pts = np.apply_along_axis(np.all, 1, clutter_pts)
+    #print("Length of clutter pts = " + str(len(clutter_pts)))
+    return intersecting_pts, -1*len(clutter_pts)
+
+    """
+    int_pts_pc = PointCloud(intersecting_pts.T, pc.frame)
+    di = ci.project_to_image(int_pts_pc)
+    bi = di.invalid_pixel_mask()
+    diff = bi.diff_with_target(clutter)
+    
+    vis2d.figure()
+    #vis2d.imshow(clutter)
+    vis2d.imshow(diff)
+    vis2d.show()
+    
+    
     for i in intersecting_pts:
         if i in clutter:
             return intersecting_pts, 0
-    return intersecting_pts, -1*len(intersecting_pts)
+    return intersecting_pts, len(intersecting_pts)
+    """
+    
 
-def score_cell_planefit(cell_pc, cell_centroid, shadow, clutter):
+def score_cell_planefit(pc, cell_pc, cell_centroid, shadow, clutter):
     """ 
     Score the cell using the dot product of the planar surface to the plane that is fit to the points in the 
     cell intersecting with the shadow. 
     """
-    intersecting_pts, len_of_those = score_total_intersection(cell_pc, cell_centroid, shadow, clutter)
+    intersecting_pts, len_of_those = score_total_intersection(pc, cell_pc, cell_centroid, shadow, clutter)
     # Fit a plane to the points in the cell that intersect with the shadow
     # Make a PCL type point cloud from the image
     p = pcl.PointCloud(intersecting_pts.astype(np.float32))
@@ -275,6 +378,7 @@ def best_cell(scores):
 
 """ Main """
 def main():
+    start_time = time.time()
     img_file = '/nfs/diskstation/projects/dex-net/placing/datasets/real/sample_ims_05_22/depth_ims_numpy/image_000001.npy'
     ci_file = '/nfs/diskstation/projects/dex-net/placing/datasets/real/sample_ims_05_22/camera_intrinsics.intr'
     mesh_file = 'demon_helmet.obj'
@@ -290,6 +394,8 @@ def main():
     ind = best_cell(scores)
     # print("Scores: \n" + str(scores))
     # print("\nBest cell = " + str(ind))
+    
+    print("--- %s seconds ---" % (time.time() - start_time))
 
 
 if __name__ == "__main__": main()
