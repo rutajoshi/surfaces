@@ -386,9 +386,11 @@ def main():
     indices, model, image, pc = largest_planar_surface(img_file, ci_file)
     mesh, best_pose, rt = find_stable_poses(mesh_file)
     shadow = find_shadow(mesh, best_pose, model[0:3])
-
-    #vis3d.mesh(shadow, rt)
-    #vis3d.show()
+    
+    vis3d.figure()
+    vis3d.points(pc, color=(1,0,0))
+    vis3d.mesh(shadow, rt)
+    vis3d.show()
 
     scores, split_size = score_cells(pc, indices, model, shadow, ci_file)
     ind = best_cell(scores)

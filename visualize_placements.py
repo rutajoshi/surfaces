@@ -64,7 +64,7 @@ def find_stable_poses(mesh_file):
     # vis3d.show()
     return mesh, best_pose, rt
 
-""" 3. Given the object in the stable pose, find the shadow of the convex hull """
+""" 3. Given the object in the stable pose, find the shadow of the convex hull. This is the bottom faces of the hull. """
 def find_shadow(mesh, best_pose, plane_normal):
     print("Plane normal = " + str(plane_normal))
     mesh = mesh.apply_transform(best_pose)
@@ -72,37 +72,139 @@ def find_shadow(mesh, best_pose, plane_normal):
     faces_to_keep, fn_to_keep = [], []
     for face, face_normal in zip(ch.faces, ch.face_normals):
         dot_prod = np.dot(face_normal, plane_normal)
-        if dot_prod < 0:
+        if dot_prod > 0:
             faces_to_keep.append(face)
             fn_to_keep.append(face_normal)
     shadow = trimesh.Trimesh(vertices=ch.vertices, faces=faces_to_keep, face_normals=fn_to_keep)
     shadow.remove_unreferenced_vertices()
     return shadow
 
+def get_pc_data(pc):
+    pc_data = pc.data.T
+    all_indices = np.where((pc_data[::,1] < 0.16) & (pc_data[::,1] > -0.24) & (pc_data[::,0] > -0.3) & (pc_data[::,0] < 0.24))[0]
+    pc_data = pc_data[all_indices]
+    #pc_data = pc_data[np.where(pc_data[::,1] < 0.16)] # remove the empty space before the start of the bin 
+    #pc_data = pc_data[np.where(pc_data[::,1] > -0.24)]
+    #pc_data = pc_data[np.where(pc_data[::,0] > -0.3)]
+    #pc_data = pc_data[np.where(pc_data[::,0] < 0.24)]
+    return pc_data, all_indices
+
 """ 4. Given cell extrema, find all points that are under the shadow """
 def find_intersections(pc, minx, miny, maxx, maxy, shadow, plane_normal):
-    pc_data = pc.data.T
-    points = pc_data[minx < pc_data[:,0]]
-    points = points[points[:,0] < maxx]
-    points = points[miny < points[:,1]]
-    points = points[points[:,1] < maxy]
-    ray_tracing = shadow.ray.intersects_any(points, np.tile(plane_normal, (len(points), 1)))
+    pc_data, ind = get_pc_data(pc)
+    cell_indices = np.where((minx < pc_data[:,0]) & (pc_data[:,0] < maxx) & (miny < pc_data[:,1]) & (pc_data[:,1] < maxy))[0]
+    points = pc_data[cell_indices]
+    
+    cell_centroid = np.array([(minx+maxx)/2, (miny+maxy)/2, np.mean(pc_data[::,2])])
+    mesh_centroid = shadow.centroid
+    translation = cell_centroid - mesh_centroid
+    shadow.apply_translation(translation)
+
+    ray = np.array([plane_normal[0], plane_normal[1], -1*plane_normal[2]])
+    ray_tracing = shadow.ray.intersects_any(points, np.tile(ray, (len(points), 1)))
+    #print("Intersection pts = " + str(np.count_nonzero(ray_tracing)))
     pts_in_shadow = points[ray_tracing]
+    shadow_indices = cell_indices[ray_tracing]
+    real_pts = pc_data[shadow_indices]
+    #print("pts_in_shadow = " + str(pts_in_shadow))
+    #print("real_pts = " + str(real_pts))
     # Visualize
     pts_in_shadow_pc = PointCloud(pts_in_shadow.T, pc.frame)
     di = ci.project_to_image(pts_in_shadow_pc)
+
+
+    #ray_tracing = shadow.ray.intersects_any(pc_data, np.tile(ray, (len(pc_data), 1)))
+    #pts_in_shadow = pc_data[ray_tracing]
+    #shadow_indices = np.where(ray_tracing==True)[0]
+
+    #vis3d.figure()
+    #vis3d.mesh(shadow)
+    #display_pc = ci.deproject(di)
+    #vis3d.points(display_pc, color=(0,1,1))
+    #vis3d.show()
+    
     #vis2d.figure()
     #vis2d.imshow(di)
     #vis2d.show()
     # --
-    return pts_in_shadow
+    return pts_in_shadow, shadow_indices
+
+""" Generate n rotations for the given shadow, equally spaced around the unit circle. """
+def rotations(shadow, n):
+    theta = (360 / n) * (2 * math.pi / 360) 
+    r = np.array([[math.cos(theta), -1*math.sin(theta), 0, 0],
+                      [math.sin(theta), math.cos(theta), 0, 0],
+                      [0, 0, 1, 0],
+                      [0, 0, 0, 0]])
+    rotated_shadows = [shadow]
+    for i in range(1,n):
+        shadow.apply_transform(r)
+        rotated_shadows.append(shadow)
+    return rotated_shadows
+
+""" Find clutter: everything not belonging to the plane found by segmentation """
+def find_clutter(pc, indices, model):
+    not_in_plane_indices = np.setdiff1d(np.arange(len(pc.data.T)), indices) # indexes into pc.data.T
+    pc_data, in_bin_indices = get_pc_data(pc) # indexes into pc.data.T
+    clutter_in_bin_indices = np.intersect1d(not_in_plane_indices, in_bin_indices) # indexes into pc.data.T
+    new_indices_mask = np.isin(in_bin_indices, clutter_in_bin_indices)
+    clutter_indices = np.where(new_indices_mask==True)[0]
+    return clutter_indices
+
+""" Visualize in 3d, clutter vs non-clutter points """
+def binarized_clutter_image(pc, indices, model):
+    pc_data, ind = get_pc_data(pc)
+    plane = pc.data.T[indices]
+    clutter_indices = find_clutter(pc, indices, model)
+    clutter = pc_data[clutter_indices]
+    #vis3d.figure()
+    #vis3d.points(plane, color=(1,0,0))
+    #vis3d.points(clutter, color=(0,1,0))
+    #vis3d.show()
+    return plane, clutter, clutter_indices
+
+""" Visualize in 3d, shadow vs non-shadow points """
+def binarized_shadow_image(pc, minx, miny, maxx, maxy, shadow, plane_normal):
+    pc_data, ind = get_pc_data(pc)
+    pts_in_shadow, shadow_indices = find_intersections(pc, minx, miny, maxx, maxy, shadow, plane_normal)
+    not_in_shadow = np.setdiff1d(np.arange(len(pc_data)), shadow_indices)
+    not_in_shadow = pc_data[not_in_shadow]
+    #print(not_in_shadow.shape)
+    #vis3d.figure()
+    #vis3d.points(pts_in_shadow, color=(1,0,0))
+    #vis3d.points(not_in_shadow, color=(0,1,0))
+    #vis3d.show()
+    return not_in_shadow, pts_in_shadow, shadow_indices
+
+""" Visualize in 3d overlap between shadow and clutter """
+def binarized_overlap_image(pc, minx, miny, maxx, maxy, shadow, plane_normal, indices, model):
+    pc_data, ind = get_pc_data(pc)
+    plane, clutter, clutter_indices = binarized_clutter_image(pc, indices, model)
+    not_in_shadow, pts_in_shadow, shadow_indices = binarized_shadow_image(pc, minx, miny, maxx, maxy, shadow, plane_normal)
+    overlap_indices = np.intersect1d(clutter_indices, shadow_indices)
+    #print("Clutter = " + str(clutter_indices))
+    #print("Shadow = " + str(shadow_indices))
+    #print("Number of overlap indices = " + str(len(overlap_indices)))
+    #print("Overlap indices = " + str(overlap_indices))
+    overlap = pc_data[overlap_indices]
+    rest = pc_data[np.setdiff1d(np.arange(len(pc_data)), overlap_indices)]
+    
+    vis3d.figure()
+    vis3d.points(pc_data[shadow_indices], color=(0,0,1))
+    vis3d.points(clutter, color=(1,0,0))
+    vis3d.show()
+
+    vis3d.figure()
+    vis3d.points(rest, color=(1,0,1))
+    vis3d.points(overlap, color=(0,1,0))
+    vis3d.show()
+
 
 """ 5. Go through the cells of a given bin image """
 def grid_search(pc, indices, model, shadow):
     length, width, height = shadow.extents
     split_size = max(length, width)
-    pc_data = pc.data.T
-    pc_data = pc_data[np.where(pc_data[::,1] < 0.16)] # remove the empty space before the start of the bin 
+    pc_data, ind = get_pc_data(pc)
     maxes = np.max(pc_data, axis=0)
     mins = np.min(pc_data, axis=0)
     bin_base = mins[2]
@@ -114,17 +216,31 @@ def grid_search(pc, indices, model, shadow):
         for j in range(int(np.round((maxes[1]-mins[1])/split_size))):
             y = mins[1] + j*split_size
             # translate the mesh to the center of the cell
-            mesh_centroid = shadow.centroid
-            cell_centroid = np.array([x + (split_size / 2), y + (split_size / 2), bin_base])
-            translation = cell_centroid - mesh_centroid
-            untranslation = -1 * translation
-            shadow.apply_translation(translation)
+            #mesh_centroid = shadow.centroid
+            #cell_centroid = np.array([x + (split_size / 2), y + (split_size / 2), bin_base])
+            #print("Mesh centroid: " + str(mesh_centroid))
+            #print("Cell centroid: " + str(cell_centroid))
+            #translation = cell_centroid - mesh_centroid
+            #untranslation = -1 * translation
+            #shadow.apply_translation(translation)
+            
+            #vis3d.figure()
+            #vis3d.points(pc_data, color=(1,0,0))
+            #vis3d.mesh(shadow)
+            #vis3d.show()
 
-            pts_in_shadow = find_intersections(pc, x, y, x+split_size, y+split_size, shadow, plane_normal)
-            scores[i][j] = len(pts_in_shadow)
+            binarized_overlap_image(pc, x, y, x+split_size, y+split_size, shadow, plane_normal, indices, model)
+
+            for sh in rotations(shadow, 8):
+                #vis3d.figure()
+                #vis3d.points(pc_data, color=(1,0,0))
+                #vis3d.mesh(sh)
+                #vis3d.show()
+                pts_in_shadow, shadow_indices = find_intersections(pc, x, y, x+split_size, y+split_size, sh, plane_normal)
+                scores[i][j] = len(pts_in_shadow)
 
             # un-translate the mesh before the next iteration
-            shadow.apply_translation(untranslation)
+            #shadow.apply_translation(untranslation)
 
     print("\nScores: \n" + str(scores))
     best = best_cell(scores)
@@ -143,11 +259,11 @@ def main():
     mesh, best_pose, rt = find_stable_poses(mesh_file)
     shadow = find_shadow(mesh, best_pose, model[0:3])
     
-    vis3d.figure()
-    vis3d.points(pc, color=(1,0,0))
+    #vis3d.figure()
+    #vis3d.points(pc, color=(1,0,0))
 
-    vis3d.mesh(shadow, rt)
-    vis3d.show()
+    #vis3d.mesh(shadow, rt)
+    #vis3d.show()
 
     grid_search(pc, indices, model, shadow)
 
