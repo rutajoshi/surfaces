@@ -189,15 +189,17 @@ def binarized_overlap_image(pc, minx, miny, maxx, maxy, shadow, plane_normal, in
     overlap = pc_data[overlap_indices]
     rest = pc_data[np.setdiff1d(np.arange(len(pc_data)), overlap_indices)]
     
-    vis3d.figure()
-    vis3d.points(pc_data[shadow_indices], color=(0,0,1))
-    vis3d.points(clutter, color=(1,0,0))
-    vis3d.show()
+    #vis3d.figure()
+    #vis3d.points(pc_data[shadow_indices], color=(0,0,1)) # shadow
+    #vis3d.points(clutter, color=(1,0,0)) # clutter
+    #vis3d.show()
 
-    vis3d.figure()
-    vis3d.points(rest, color=(1,0,1))
-    vis3d.points(overlap, color=(0,1,0))
-    vis3d.show()
+    #vis3d.figure()
+    #vis3d.points(rest, color=(1,0,1)) # non-overlapping
+    #vis3d.points(overlap, color=(0,1,0)) #overlapping shadow and clutter
+    #vis3d.show()
+
+    return len(overlap)
 
 
 """ 5. Go through the cells of a given bin image """
@@ -215,35 +217,30 @@ def grid_search(pc, indices, model, shadow):
         x = mins[0] + i*split_size
         for j in range(int(np.round((maxes[1]-mins[1])/split_size))):
             y = mins[1] + j*split_size
-            # translate the mesh to the center of the cell
-            #mesh_centroid = shadow.centroid
-            #cell_centroid = np.array([x + (split_size / 2), y + (split_size / 2), bin_base])
-            #print("Mesh centroid: " + str(mesh_centroid))
-            #print("Cell centroid: " + str(cell_centroid))
-            #translation = cell_centroid - mesh_centroid
-            #untranslation = -1 * translation
-            #shadow.apply_translation(translation)
-            
-            #vis3d.figure()
-            #vis3d.points(pc_data, color=(1,0,0))
-            #vis3d.mesh(shadow)
-            #vis3d.show()
 
-            binarized_overlap_image(pc, x, y, x+split_size, y+split_size, shadow, plane_normal, indices, model)
+            #binarized_overlap_image(pc, x, y, x+split_size, y+split_size, shadow, plane_normal, indices, model)
 
             for sh in rotations(shadow, 8):
-                #vis3d.figure()
-                #vis3d.points(pc_data, color=(1,0,0))
-                #vis3d.mesh(sh)
-                #vis3d.show()
-                pts_in_shadow, shadow_indices = find_intersections(pc, x, y, x+split_size, y+split_size, sh, plane_normal)
-                scores[i][j] = len(pts_in_shadow)
+                overlap_size = binarized_overlap_image(pc, x, y, x+split_size, y+split_size, shadow, plane_normal, indices, model)
+                #pts_in_shadow, shadow_indices = find_intersections(pc, x, y, x+split_size, y+split_size, sh, plane_normal)
+                scores[i][j] = -1*overlap_size
 
-            # un-translate the mesh before the next iteration
-            #shadow.apply_translation(untranslation)
 
     print("\nScores: \n" + str(scores))
     best = best_cell(scores)
+    print("\nBest Cell: " + str(best) + ", with score = " + str(scores[best[0]][best[1]]))
+    #-------
+    # Visualize best placement
+    vis3d.figure()
+    x = mins[0] + best[0]*split_size
+    y = mins[1] + best[1]*split_size
+    cell_indices = np.where((x < pc_data[:,0]) & (pc_data[:,0] < x+split_size) & (y < pc_data[:,1]) & (pc_data[:,1] < y+split_size))[0]
+    points = pc_data[cell_indices]
+    rest = pc_data[np.setdiff1d(np.arange(len(pc_data)), cell_indices)]
+    vis3d.points(points, color=(0,1,1))
+    vis3d.points(rest, color=(1,0,1))
+    vis3d.show()
+    #--------
 
 """ 6. Return the cell with the highest score """
 def best_cell(scores):
