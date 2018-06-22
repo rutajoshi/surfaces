@@ -9,6 +9,9 @@ import IPython
 import math
 import time
 
+# Debug
+from line_profiler import LineProfiler
+
 # Point cloud library imports
 import pcl
 import pcl.pcl_visualization
@@ -17,7 +20,6 @@ import pcl.pcl_visualization
 from autolab_core import PointCloud, RigidTransform
 from perception import DepthImage, CameraIntrinsics
 from visualization import Visualizer2D as vis2d, Visualizer3D as vis3d
-from clustering import *
 
 """
 This library uses an object mesh file and a depth image of a bin for object placement to infer the best placement location for the given object in the
@@ -83,10 +85,6 @@ def get_pc_data(pc):
     pc_data = pc.data.T
     all_indices = np.where((pc_data[::,1] < 0.16) & (pc_data[::,1] > -0.24) & (pc_data[::,0] > -0.3) & (pc_data[::,0] < 0.24))[0]
     pc_data = pc_data[all_indices]
-    #pc_data = pc_data[np.where(pc_data[::,1] < 0.16)] # remove the empty space before the start of the bin 
-    #pc_data = pc_data[np.where(pc_data[::,1] > -0.24)]
-    #pc_data = pc_data[np.where(pc_data[::,0] > -0.3)]
-    #pc_data = pc_data[np.where(pc_data[::,0] < 0.24)]
     return pc_data, all_indices
 
 """ 4. Given cell extrema, find all points that are under the shadow """
