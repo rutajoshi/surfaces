@@ -32,6 +32,7 @@ ci_file = '/nfs/diskstation/projects/dex-net/placing/datasets/real/sample_ims_05
 ci = CameraIntrinsics.load(ci_file)
 
 """ 1. Given depth image of bin, retrieve largest planar surface """
+@profile
 def largest_planar_surface(filename):
     # Load the image as a numpy array and the camera intrinsics
     image = np.load(filename)
@@ -50,6 +51,7 @@ def largest_planar_surface(filename):
     return indices, model, image, pc
 
 """ 2. Given an object mesh, find stable poses """
+@profile
 def find_stable_poses(mesh_file):
     # Load the mesh and compute stable poses
     mesh = trimesh.load(mesh_file)
@@ -67,6 +69,7 @@ def find_stable_poses(mesh_file):
     return mesh, best_pose, rt
 
 """ 3. Given the object in the stable pose, find the shadow of the convex hull. This is the bottom faces of the hull. """
+@profile
 def find_shadow(mesh, best_pose, plane_normal):
     print("Plane normal = " + str(plane_normal))
     mesh = mesh.apply_transform(best_pose)
@@ -80,14 +83,35 @@ def find_shadow(mesh, best_pose, plane_normal):
     shadow = trimesh.Trimesh(vertices=ch.vertices, faces=faces_to_keep, face_normals=fn_to_keep)
     shadow.remove_unreferenced_vertices()
     return shadow
+    #return ch
 
+@profile
 def get_pc_data(pc):
     pc_data = pc.data.T
     all_indices = np.where((pc_data[::,1] < 0.16) & (pc_data[::,1] > -0.24) & (pc_data[::,0] > -0.3) & (pc_data[::,0] < 0.24))[0]
     pc_data = pc_data[all_indices]
     return pc_data, all_indices
 
+""" 3 and a half. Intelligent ray casting to find clutter overlaps """
+@profile
+def get_shadow_projected_intersecting_pts(pc, minx, miny, maxx, maxy, shadow, plane_normal):
+    #print("Original shadow: " + str(shadow.is_watertight))
+    pc_data, ind = get_pc_data(pc)
+    cell_indices = np.where((minx < pc_data[:,0]) & (pc_data[:,0] < maxx) & (miny < pc_data[:,1]) & (pc_data[:,1] < maxy))[0]
+    points = pc_data[cell_indices]
+    cell_centroid = np.array([(minx+maxx)/2, (miny+maxy)/2, np.mean(pc_data[::,2])])
+
+    proj_matrix = trimesh.transformations.projection_matrix(cell_centroid, plane_normal)
+    flat = shadow.apply_transform(proj_matrix)
+    #print("Projected shadow: " + str(flat.is_watertight))
+    contains = flat.contains(points)
+    
+    pts_in_shadow = points[contains]
+    shadow_indices = cell_indices[contains]
+    return pts_in_shadow, shadow_indices
+
 """ 4. Given cell extrema, find all points that are under the shadow """
+@profile
 def find_intersections(pc, minx, miny, maxx, maxy, shadow, plane_normal):
     pc_data, ind = get_pc_data(pc)
     cell_indices = np.where((minx < pc_data[:,0]) & (pc_data[:,0] < maxx) & (miny < pc_data[:,1]) & (pc_data[:,1] < maxy))[0]
@@ -98,17 +122,19 @@ def find_intersections(pc, minx, miny, maxx, maxy, shadow, plane_normal):
     translation = cell_centroid - mesh_centroid
     shadow.apply_translation(translation)
 
+    # Create a ray that points in the direction of the plane normal
     ray = np.array([plane_normal[0], plane_normal[1], -1*plane_normal[2]])
+    # Shoot that ray up from all the points in the cell to see if they intersect with the mesh. Retrieve a boolean array.
     ray_tracing = shadow.ray.intersects_any(points, np.tile(ray, (len(points), 1)))
     #print("Intersection pts = " + str(np.count_nonzero(ray_tracing)))
     pts_in_shadow = points[ray_tracing]
     shadow_indices = cell_indices[ray_tracing]
-    real_pts = pc_data[shadow_indices]
+    #real_pts = pc_data[shadow_indices]
     #print("pts_in_shadow = " + str(pts_in_shadow))
     #print("real_pts = " + str(real_pts))
     # Visualize
-    pts_in_shadow_pc = PointCloud(pts_in_shadow.T, pc.frame)
-    di = ci.project_to_image(pts_in_shadow_pc)
+    #pts_in_shadow_pc = PointCloud(pts_in_shadow.T, pc.frame)
+    #di = ci.project_to_image(pts_in_shadow_pc)
 
 
     #ray_tracing = shadow.ray.intersects_any(pc_data, np.tile(ray, (len(pc_data), 1)))
@@ -128,6 +154,7 @@ def find_intersections(pc, minx, miny, maxx, maxy, shadow, plane_normal):
     return pts_in_shadow, shadow_indices
 
 """ Generate n rotations for the given shadow, equally spaced around the unit circle. """
+@profile
 def rotations(shadow, n):
     theta = (360 / n) * (2 * math.pi / 360) 
     r = np.array([[math.cos(theta), -1*math.sin(theta), 0, 0],
@@ -141,6 +168,7 @@ def rotations(shadow, n):
     return rotated_shadows
 
 """ Find clutter: everything not belonging to the plane found by segmentation """
+@profile
 def find_clutter(pc, indices, model):
     not_in_plane_indices = np.setdiff1d(np.arange(len(pc.data.T)), indices) # indexes into pc.data.T
     pc_data, in_bin_indices = get_pc_data(pc) # indexes into pc.data.T
@@ -150,6 +178,7 @@ def find_clutter(pc, indices, model):
     return clutter_indices
 
 """ Visualize in 3d, clutter vs non-clutter points """
+@profile
 def binarized_clutter_image(pc, indices, model):
     pc_data, ind = get_pc_data(pc)
     plane = pc.data.T[indices]
@@ -162,9 +191,10 @@ def binarized_clutter_image(pc, indices, model):
     return plane, clutter, clutter_indices
 
 """ Visualize in 3d, shadow vs non-shadow points """
+@profile
 def binarized_shadow_image(pc, minx, miny, maxx, maxy, shadow, plane_normal):
     pc_data, ind = get_pc_data(pc)
-    pts_in_shadow, shadow_indices = find_intersections(pc, minx, miny, maxx, maxy, shadow, plane_normal)
+    pts_in_shadow, shadow_indices = find_intersections(pc, minx, miny, maxx, maxy, shadow, plane_normal) #get_shadow_projected_intersecting_pts(pc, minx, miny, maxx, maxy, shadow, plane_normal)
     not_in_shadow = np.setdiff1d(np.arange(len(pc_data)), shadow_indices)
     not_in_shadow = pc_data[not_in_shadow]
     #print(not_in_shadow.shape)
@@ -175,6 +205,7 @@ def binarized_shadow_image(pc, minx, miny, maxx, maxy, shadow, plane_normal):
     return not_in_shadow, pts_in_shadow, shadow_indices
 
 """ Visualize in 3d overlap between shadow and clutter """
+@profile
 def binarized_overlap_image(pc, minx, miny, maxx, maxy, shadow, plane_normal, indices, model):
     pc_data, ind = get_pc_data(pc)
     plane, clutter, clutter_indices = binarized_clutter_image(pc, indices, model)
@@ -201,6 +232,7 @@ def binarized_overlap_image(pc, minx, miny, maxx, maxy, shadow, plane_normal, in
 
 
 """ 5. Go through the cells of a given bin image """
+@profile
 def grid_search(pc, indices, model, shadow):
     length, width, height = shadow.extents
     split_size = max(length, width)
@@ -220,7 +252,6 @@ def grid_search(pc, indices, model, shadow):
 
             for sh in rotations(shadow, 8):
                 overlap_size = binarized_overlap_image(pc, x, y, x+split_size, y+split_size, shadow, plane_normal, indices, model)
-                #pts_in_shadow, shadow_indices = find_intersections(pc, x, y, x+split_size, y+split_size, sh, plane_normal)
                 scores[i][j] = -1*overlap_size
 
 
@@ -241,6 +272,7 @@ def grid_search(pc, indices, model, shadow):
     #--------
 
 """ 6. Return the cell with the highest score """
+@profile
 def best_cell(scores):
     ind = np.unravel_index(np.argmax(scores, axis=None), scores.shape)
     return ind # tuple
