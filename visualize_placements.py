@@ -18,8 +18,9 @@ import pcl.pcl_visualization
 
 # Autolab imports
 from autolab_core import PointCloud, RigidTransform
-from perception import DepthImage, CameraIntrinsics
+from perception import DepthImage, CameraIntrinsics, RenderMode
 from visualization import Visualizer2D as vis2d, Visualizer3D as vis3d
+from meshrender import Scene, MaterialProperties, AmbientLight, PointLight, SceneObject, VirtualCamera
 
 """
 This library uses an object mesh file and a depth image of a bin for object placement to infer the best placement location for the given object in the
@@ -28,8 +29,12 @@ bin from the depth image.
 """
 
 # Globals
-ci_file = '/nfs/diskstation/projects/dex-net/placing/datasets/real/sample_ims_05_22/camera_intrinsics.intr'
+#ci_file = '/nfs/diskstation/projects/dex-net/placing/datasets/real/sample_ims_05_22/camera_intrinsics.intr'
+ci_file = '/nfs/diskstation/projects/dex-net/placing/datasets/sim/sim_06_22/image_dataset/depth_ims/intrinsics_000002.intr'
 ci = CameraIntrinsics.load(ci_file)
+
+cp_file = '/nfs/diskstation/projects/dex-net/placing/datasets/sim/sim_06_22/image_dataset/depth_ims/pose_000002.tf'
+cp = RigidTransform.load(cp_file)
 
 """ 1. Given depth image of bin, retrieve largest planar surface """
 @profile
@@ -49,6 +54,13 @@ def largest_planar_surface(filename):
     seg.set_distance_threshold(0.005)
     indices, model = seg.segment()
     return indices, model, image, pc
+
+@profile
+def plane_depth_img(pc, indices, model):
+    plane = pc.data.T[indices]
+    plane_pc = PointCloud(plane.T, pc.frame)
+    di = ci.project_to_image(plane_pc)
+    return di
 
 """ 2. Given an object mesh, find stable poses """
 @profile
@@ -92,7 +104,7 @@ def get_pc_data(pc):
     pc_data = pc_data[all_indices]
     return pc_data, all_indices
 
-""" 3 and a half. Intelligent ray casting to find clutter overlaps """
+""" Intelligent ray casting to find clutter overlaps """
 @profile
 def get_shadow_projected_intersecting_pts(pc, minx, miny, maxx, maxy, shadow, plane_normal):
     #print("Original shadow: " + str(shadow.is_watertight))
@@ -110,6 +122,37 @@ def get_shadow_projected_intersecting_pts(pc, minx, miny, maxx, maxy, shadow, pl
     shadow_indices = cell_indices[contains]
     return pts_in_shadow, shadow_indices
 
+""" Find points under the shadow by rendering a binary mask of clutter. """
+@profile
+def under_shadow(pc, pc_data, indices, model, rotated_shadow, minx, maxx, miny, maxy, scene, bin_bi):
+    ## Process the shadow by translating it
+    #cell_centroid = np.array([(minx+maxx)/2, (miny+maxy)/2, np.min(pc_data[::,2])])
+    #mesh_centroid = rotated_shadow.centroid
+    #translation = cell_centroid - mesh_centroid
+    #rotated_shadow.apply_translation(translation) 
+
+    # Get shadow depth img.
+    #shadow_obj = SceneObject(rotated_shadow)
+    #scene.add_object('shadow', shadow_obj)
+    wd = scene.wrapped_render([RenderMode.DEPTH])[0]
+    wd_bi = wd.to_binary()
+    # Get bin depth image with clutter.
+    #plane = pc.data.T[indices]
+    #plane_pc = PointCloud(plane.T, pc.frame)
+    #di = ci.project_to_image(plane_pc)
+    #bi = di.to_binary()
+    #bi = bin_di.to_binary()
+    # Get the overlap of the binary masks
+    #both = bi.mask_binary(wd_bi)
+    both = bin_bi.mask_binary(wd_bi)
+    score = np.count_nonzero(both.data)
+    if score > 0:
+        vis2d.figure()
+        vis2d.imshow(both)
+        vis2d.show()
+    # Return the number of overlap points
+    return score
+
 """ 4. Given cell extrema, find all points that are under the shadow """
 @profile
 def find_intersections(pc, minx, miny, maxx, maxy, shadow, plane_normal):
@@ -126,27 +169,17 @@ def find_intersections(pc, minx, miny, maxx, maxy, shadow, plane_normal):
     ray = np.array([plane_normal[0], plane_normal[1], -1*plane_normal[2]])
     # Shoot that ray up from all the points in the cell to see if they intersect with the mesh. Retrieve a boolean array.
     ray_tracing = shadow.ray.intersects_any(points, np.tile(ray, (len(points), 1)))
-    #print("Intersection pts = " + str(np.count_nonzero(ray_tracing)))
     pts_in_shadow = points[ray_tracing]
     shadow_indices = cell_indices[ray_tracing]
-    #real_pts = pc_data[shadow_indices]
-    #print("pts_in_shadow = " + str(pts_in_shadow))
-    #print("real_pts = " + str(real_pts))
+    
     # Visualize
     #pts_in_shadow_pc = PointCloud(pts_in_shadow.T, pc.frame)
     #di = ci.project_to_image(pts_in_shadow_pc)
-
-
-    #ray_tracing = shadow.ray.intersects_any(pc_data, np.tile(ray, (len(pc_data), 1)))
-    #pts_in_shadow = pc_data[ray_tracing]
-    #shadow_indices = np.where(ray_tracing==True)[0]
-
     #vis3d.figure()
     #vis3d.mesh(shadow)
     #display_pc = ci.deproject(di)
     #vis3d.points(display_pc, color=(0,1,1))
     #vis3d.show()
-    
     #vis2d.figure()
     #vis2d.imshow(di)
     #vis2d.show()
@@ -175,14 +208,14 @@ def find_clutter(pc, indices, model):
     clutter_in_bin_indices = np.intersect1d(not_in_plane_indices, in_bin_indices) # indexes into pc.data.T
     new_indices_mask = np.isin(in_bin_indices, clutter_in_bin_indices)
     clutter_indices = np.where(new_indices_mask==True)[0]
-    return clutter_indices
+    return clutter_indices, new_indices_mask
 
 """ Visualize in 3d, clutter vs non-clutter points """
 @profile
 def binarized_clutter_image(pc, indices, model):
     pc_data, ind = get_pc_data(pc)
     plane = pc.data.T[indices]
-    clutter_indices = find_clutter(pc, indices, model)
+    clutter_indices, clutter_mask = find_clutter(pc, indices, model)
     clutter = pc_data[clutter_indices]
     #vis3d.figure()
     #vis3d.points(plane, color=(1,0,0))
@@ -230,10 +263,84 @@ def binarized_overlap_image(pc, minx, miny, maxx, maxy, shadow, plane_normal, in
 
     return len(overlap)
 
+""" Returns T_obj_world rigid transforms for the n rotations of a shadow translated to a cell. """
+def transforms(pc, pc_data, shadow, minx, miny, maxx, maxy, n):
+    # Find the translation component
+    cell_centroid = np.array([(minx+maxx)/2, (miny+maxy)/2, np.min(pc_data[::,2])])
+    mesh_centroid = shadow.centroid
+    translation = cell_centroid - mesh_centroid
+    #shadow.apply_translation(translation)
+
+    # Find each rotation component and create a transform
+    transforms = []
+    theta = (360 / n) * (2 * math.pi / 360)
+    for i in range(n):
+        angle = i*theta
+        rotation = np.array([[math.cos(angle), -1*math.sin(angle), 0],
+                      [math.sin(angle), math.cos(angle), 0],
+                      [0, 0, 1]])
+        rigid_transform = RigidTransform(rotation=rotation, translation=translation, from_frame=pc.frame, to_frame='world')
+        transforms.append(rigid_transform)
+
+    # Return the list of transforms
+    return transforms
+
+""" Faster grid search """
+@profile
+def fast_grid_search(pc, indices, model, shadow, img_file):
+    length, width, height = shadow.extents
+    split_size = max(length, width)
+    pc_data, ind = get_pc_data(pc)
+    maxes = np.max(pc_data, axis=0)
+    mins = np.min(pc_data, axis=0)
+    bin_base = mins[2]
+    plane_normal = model[0:3]
+
+    plane = pc.data.T[indices]
+    plane_pc = PointCloud(plane.T, pc.frame)
+    di = ci.project_to_image(plane_pc)
+    bi = di.to_binary()
+
+    scene = Scene()
+    camera = VirtualCamera(ci, cp)
+    scene.camera = camera
+    # Get shadow depth img.
+    shadow_obj = SceneObject(shadow)
+    scene.add_object('shadow', shadow_obj)
+
+    orig_tow = shadow_obj.T_obj_world
+
+    scores = np.zeros((int(np.round((maxes[0]-mins[0])/split_size)), int(np.round((maxes[1]-mins[1])/split_size))))
+    for i in range(int(np.round((maxes[0]-mins[0])/split_size))):
+        x = mins[0] + i*split_size
+        for j in range(int(np.round((maxes[1]-mins[1])/split_size))):
+            y = mins[1] + j*split_size
+            
+            for tow in transforms(pc, pc_data, shadow, x, y, x+split_size, y+split_size, 8):
+                shadow_obj.T_obj_world = tow
+                scores[i][j] = under_shadow(pc, pc_data, indices, model, shadow, x, x+split_size, y, y+split_size, scene, bi) 
+                shadow_obj.T_obj_world = orig_tow
+
+    print("\nScores: \n" + str(scores))
+    best = best_cell(scores)
+    print("\nBest Cell: " + str(best) + ", with score = " + str(scores[best[0]][best[1]]))
+    #-------
+    # Visualize best placement
+    vis3d.figure()
+    x = mins[0] + best[0]*split_size
+    y = mins[1] + best[1]*split_size
+    cell_indices = np.where((x < pc_data[:,0]) & (pc_data[:,0] < x+split_size) & (y < pc_data[:,1]) & (pc_data[:,1] < y+split_size))[0]
+    points = pc_data[cell_indices]
+    rest = pc_data[np.setdiff1d(np.arange(len(pc_data)), cell_indices)]
+    vis3d.points(points, color=(0,1,1))
+    vis3d.points(rest, color=(1,0,1))
+    vis3d.show()
+    #--------
+
 
 """ 5. Go through the cells of a given bin image """
 @profile
-def grid_search(pc, indices, model, shadow):
+def grid_search(pc, indices, model, shadow, img_file):
     length, width, height = shadow.extents
     split_size = max(length, width)
     pc_data, ind = get_pc_data(pc)
@@ -251,8 +358,12 @@ def grid_search(pc, indices, model, shadow):
             #binarized_overlap_image(pc, x, y, x+split_size, y+split_size, shadow, plane_normal, indices, model)
 
             for sh in rotations(shadow, 8):
-                overlap_size = binarized_overlap_image(pc, x, y, x+split_size, y+split_size, shadow, plane_normal, indices, model)
-                scores[i][j] = -1*overlap_size
+                #overlap_size = binarized_overlap_image(pc, x, y, x+split_size, y+split_size, sh, plane_normal, indices, model)
+                #scores[i][j] = -1*overlap_size
+                scene = Scene()
+                camera = VirtualCamera(ci, cp)
+                scene.camera = camera
+                scores[i][j] = under_shadow(pc, pc_data, indices, model, sh, x, x+split_size, y, y+split_size, scene) 
 
 
     print("\nScores: \n" + str(scores))
@@ -277,10 +388,26 @@ def best_cell(scores):
     ind = np.unravel_index(np.argmax(scores, axis=None), scores.shape)
     return ind # tuple
 
+def depth_to_bin(img_file):
+    # Load the image as a numpy array and the camera intrinsics
+    image = np.load(img_file)
+    # Create and deproject a depth image of the data using the camera intrinsics
+    di = DepthImage(image, frame=ci.frame)
+    di = di.inpaint()
+    bi = di.to_binary(threshold=0.85)
+    #vis2d.figure()
+    #vis2d.imshow(di)
+    #vis2d.imshow(bi)
+    #vis2d.show()
+    return bi
+
 def main():
     start_time = time.time()
-    img_file = '/nfs/diskstation/projects/dex-net/placing/datasets/real/sample_ims_05_22/depth_ims_numpy/image_000001.npy'
+    #img_file = '/nfs/diskstation/projects/dex-net/placing/datasets/real/sample_ims_05_22/depth_ims_numpy/image_000001.npy'
+    img_file = '/nfs/diskstation/projects/dex-net/placing/datasets/sim/sim_06_22/image_dataset/depth_ims/image_000002.npy'
     mesh_file = 'demon_helmet.obj'
+
+    #bi = depth_to_bin(img_file) 
 
     indices, model, image, pc = largest_planar_surface(img_file)
     mesh, best_pose, rt = find_stable_poses(mesh_file)
@@ -292,7 +419,7 @@ def main():
     #vis3d.mesh(shadow, rt)
     #vis3d.show()
 
-    grid_search(pc, indices, model, shadow)
+    fast_grid_search(pc, indices, model, shadow, img_file)
 
     print("--- %s seconds ---" % (time.time() - start_time))
 
