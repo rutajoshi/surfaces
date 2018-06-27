@@ -98,17 +98,25 @@ def find_shadow(mesh, best_pose, plane_normal):
     #return ch
 
 @profile
-def get_pc_data(pc):
+def get_pc_data(pc, indices):
     pc_data = pc.data.T
-    all_indices = np.where((pc_data[::,1] < 0.16) & (pc_data[::,1] > -0.24) & (pc_data[::,0] > -0.3) & (pc_data[::,0] < 0.24))[0]
+    pc_plane = pc.data.T[indices]
+    mins = np.min(pc_plane, axis=0) 
+    maxes = np.max(pc_plane, axis=0)
+    all_indices = np.where((pc_data[::,0] > mins[0]) & (pc_data[::,0] < maxes[0]) & (pc_data[::,1] > mins[1]) & (pc_data[::,1] < maxes[1]))
     pc_data = pc_data[all_indices]
     return pc_data, all_indices
 
+    #pc_data = pc.data.T
+    #all_indices = np.where((pc_data[::,1] < 0.16) & (pc_data[::,1] > -0.24) & (pc_data[::,0] > -0.3) & (pc_data[::,0] < 0.24))[0]
+    #pc_data = pc_data[all_indices]
+    #return pc_data, all_indices
+
 """ Intelligent ray casting to find clutter overlaps """
 @profile
-def get_shadow_projected_intersecting_pts(pc, minx, miny, maxx, maxy, shadow, plane_normal):
+def get_shadow_projected_intersecting_pts(pc, indices, minx, miny, maxx, maxy, shadow, plane_normal):
     #print("Original shadow: " + str(shadow.is_watertight))
-    pc_data, ind = get_pc_data(pc)
+    pc_data, ind = get_pc_data(pc, indices)
     cell_indices = np.where((minx < pc_data[:,0]) & (pc_data[:,0] < maxx) & (miny < pc_data[:,1]) & (pc_data[:,1] < maxy))[0]
     points = pc_data[cell_indices]
     cell_centroid = np.array([(minx+maxx)/2, (miny+maxy)/2, np.mean(pc_data[::,2])])
@@ -136,6 +144,14 @@ def under_shadow(pc, pc_data, indices, model, rotated_shadow, minx, maxx, miny, 
     #scene.add_object('shadow', shadow_obj)
     wd = scene.wrapped_render([RenderMode.DEPTH])[0]
     wd_bi = wd.to_binary()
+    vis2d.figure()
+    vis2d.imshow(wd_bi)
+    vis2d.show()
+
+    vis2d.figure()
+    vis2d.imshow(bin_bi)
+    vis2d.show()
+
     # Get bin depth image with clutter.
     #plane = pc.data.T[indices]
     #plane_pc = PointCloud(plane.T, pc.frame)
@@ -146,17 +162,17 @@ def under_shadow(pc, pc_data, indices, model, rotated_shadow, minx, maxx, miny, 
     #both = bi.mask_binary(wd_bi)
     both = bin_bi.mask_binary(wd_bi)
     score = np.count_nonzero(both.data)
-    if score > 0:
-        vis2d.figure()
-        vis2d.imshow(both)
-        vis2d.show()
+    #if score > 0:
+    #    vis2d.figure()
+    #    vis2d.imshow(both)
+    #    vis2d.show()
     # Return the number of overlap points
     return score
 
 """ 4. Given cell extrema, find all points that are under the shadow """
 @profile
-def find_intersections(pc, minx, miny, maxx, maxy, shadow, plane_normal):
-    pc_data, ind = get_pc_data(pc)
+def find_intersections(pc, indices, minx, miny, maxx, maxy, shadow, plane_normal):
+    pc_data, ind = get_pc_data(pc, indices)
     cell_indices = np.where((minx < pc_data[:,0]) & (pc_data[:,0] < maxx) & (miny < pc_data[:,1]) & (pc_data[:,1] < maxy))[0]
     points = pc_data[cell_indices]
     
@@ -204,7 +220,7 @@ def rotations(shadow, n):
 @profile
 def find_clutter(pc, indices, model):
     not_in_plane_indices = np.setdiff1d(np.arange(len(pc.data.T)), indices) # indexes into pc.data.T
-    pc_data, in_bin_indices = get_pc_data(pc) # indexes into pc.data.T
+    pc_data, in_bin_indices = get_pc_data(pc, indices) # indexes into pc.data.T
     clutter_in_bin_indices = np.intersect1d(not_in_plane_indices, in_bin_indices) # indexes into pc.data.T
     new_indices_mask = np.isin(in_bin_indices, clutter_in_bin_indices)
     clutter_indices = np.where(new_indices_mask==True)[0]
@@ -213,7 +229,7 @@ def find_clutter(pc, indices, model):
 """ Visualize in 3d, clutter vs non-clutter points """
 @profile
 def binarized_clutter_image(pc, indices, model):
-    pc_data, ind = get_pc_data(pc)
+    pc_data, ind = get_pc_data(pc, indices)
     plane = pc.data.T[indices]
     clutter_indices, clutter_mask = find_clutter(pc, indices, model)
     clutter = pc_data[clutter_indices]
@@ -225,9 +241,9 @@ def binarized_clutter_image(pc, indices, model):
 
 """ Visualize in 3d, shadow vs non-shadow points """
 @profile
-def binarized_shadow_image(pc, minx, miny, maxx, maxy, shadow, plane_normal):
-    pc_data, ind = get_pc_data(pc)
-    pts_in_shadow, shadow_indices = find_intersections(pc, minx, miny, maxx, maxy, shadow, plane_normal) #get_shadow_projected_intersecting_pts(pc, minx, miny, maxx, maxy, shadow, plane_normal)
+def binarized_shadow_image(pc, indices, minx, miny, maxx, maxy, shadow, plane_normal):
+    pc_data, ind = get_pc_data(pc, indices)
+    pts_in_shadow, shadow_indices = find_intersections(pc, indices, minx, miny, maxx, maxy, shadow, plane_normal) #get_shadow_projected_intersecting_pts(pc, minx, miny, maxx, maxy, shadow, plane_normal)
     not_in_shadow = np.setdiff1d(np.arange(len(pc_data)), shadow_indices)
     not_in_shadow = pc_data[not_in_shadow]
     #print(not_in_shadow.shape)
@@ -240,7 +256,7 @@ def binarized_shadow_image(pc, minx, miny, maxx, maxy, shadow, plane_normal):
 """ Visualize in 3d overlap between shadow and clutter """
 @profile
 def binarized_overlap_image(pc, minx, miny, maxx, maxy, shadow, plane_normal, indices, model):
-    pc_data, ind = get_pc_data(pc)
+    pc_data, ind = get_pc_data(pc, indices)
     plane, clutter, clutter_indices = binarized_clutter_image(pc, indices, model)
     not_in_shadow, pts_in_shadow, shadow_indices = binarized_shadow_image(pc, minx, miny, maxx, maxy, shadow, plane_normal)
     overlap_indices = np.intersect1d(clutter_indices, shadow_indices)
@@ -290,14 +306,23 @@ def transforms(pc, pc_data, shadow, minx, miny, maxx, maxy, n):
 def fast_grid_search(pc, indices, model, shadow, img_file):
     length, width, height = shadow.extents
     split_size = max(length, width)
-    pc_data, ind = get_pc_data(pc)
+    pc_data, ind = get_pc_data(pc, indices)
     maxes = np.max(pc_data, axis=0)
     mins = np.min(pc_data, axis=0)
     bin_base = mins[2]
     plane_normal = model[0:3]
 
-    plane = pc.data.T[indices]
-    plane_pc = PointCloud(plane.T, pc.frame)
+    di_temp = ci.project_to_image(pc)
+    vis2d.figure()
+    vis2d.imshow(di_temp)
+    vis2d.show()
+    
+    plane_data = pc.data.T[indices]
+    #all_indices = np.where([(plane_data[::,2] > 0.795) & (plane_data[::,2] < 0.862)])
+    #all_indices = np.where((plane_data[::,1] < 0.16) & (plane_data[::,1] > -0.24) & (plane_data[::,0] > -0.3) & (plane_data[::,0] < 0.24))[0]
+    #plane_data = plane_data[all_indices]
+
+    plane_pc = PointCloud(plane_data.T, pc.frame)
     di = ci.project_to_image(plane_pc)
     bi = di.to_binary()
 
@@ -343,7 +368,7 @@ def fast_grid_search(pc, indices, model, shadow, img_file):
 def grid_search(pc, indices, model, shadow, img_file):
     length, width, height = shadow.extents
     split_size = max(length, width)
-    pc_data, ind = get_pc_data(pc)
+    pc_data, ind = get_pc_data(pc, indices)
     maxes = np.max(pc_data, axis=0)
     mins = np.min(pc_data, axis=0)
     bin_base = mins[2]
