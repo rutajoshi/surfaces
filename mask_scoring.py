@@ -258,8 +258,8 @@ def fine_grid_search(pc, indices, model, shadow, img_file):
     mins = np.min(pc_data, axis=0)
     bin_base = mins[2]
     plane_normal = model[0:3]
-    splits = 1 
-    step_size = split_size // splits
+    splits = 3
+    step_size = split_size / splits
     
     plane_data = get_plane_data(pc, indices)
     plane_pc = PointCloud(plane_data.T, pc.frame)
@@ -275,8 +275,8 @@ def fine_grid_search(pc, indices, model, shadow, img_file):
     scene.add_object('shadow', shadow_obj)
     orig_tow = shadow_obj.T_obj_world
 
-    numx = int(np.round((maxes[0]-mins[0])/split_size)) * splits - (splits - 1)
-    numy = int(np.round((maxes[1]-mins[1])/split_size)) * splits - (splits - 1)
+    numx = (int(np.round((maxes[0]-mins[0])/split_size)) - 1) * splits + 1
+    numy = (int(np.round((maxes[1]-mins[1])/split_size)) - 1) * splits + 1
     scores = np.zeros((numx, numy))
     for i in range(numx):
         x = mins[0] + i*step_size
@@ -288,15 +288,14 @@ def fine_grid_search(pc, indices, model, shadow, img_file):
                 scores[i][j] = under_shadow(scene, bi)
                 shadow_obj.T_obj_world = orig_tow
 
-
     print("\nScores: \n" + str(scores))
     best = best_cell(scores)
     print("\nBest Cell: " + str(best) + ", with score = " + str(scores[best[0]][best[1]]))
     #-------
     # Visualize best placement
     vis3d.figure()
-    x = mins[0] + best[0]*split_size
-    y = mins[1] + best[1]*split_size
+    x = mins[0] + best[0]*step_size
+    y = mins[1] + best[1]*step_size
     cell_indices = np.where((x < pc_data[:,0]) & (pc_data[:,0] < x+split_size) & (y < pc_data[:,1]) & (pc_data[:,1] < y+split_size))[0]
     points = pc_data[cell_indices]
     rest = pc_data[np.setdiff1d(np.arange(len(pc_data)), cell_indices)]
