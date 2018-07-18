@@ -55,6 +55,23 @@ def largest_planar_surface(filename):
     indices, model = seg.segment()
     return indices, model, image, pc
 
+@profile
+def largest_planar_surface_di(di, ci, cp):
+    di = DepthImage(image, frame=ci.frame)
+    di = di.inpaint()
+    pc = ci.deproject(di)
+    pc = cp.apply(pc)
+    # Make a PCL type point cloud from the image
+    p = pcl.PointCloud(pc.data.T.astype(np.float32))
+    # Make a segmenter and segment the point cloud.
+    seg = p.make_segmenter()
+    seg.set_model_type(pcl.SACMODEL_PARALLEL_PLANE)
+    seg.set_method_type(pcl.SAC_RANSAC)
+    seg.set_distance_threshold(0.005)
+    indices, model = seg.segment()
+    return indices, model, image, pc
+
+
 """ 2. Given an object mesh, find stable poses """
 @profile
 def find_stable_poses(mesh_file):
@@ -72,6 +89,21 @@ def find_stable_poses(mesh_file):
     # vis3d.mesh(mesh, rt)
     # vis3d.show()
     return mesh, best_pose, rt
+
+@profile
+def find_stable_poses_mesh(mesh):
+    stable_poses, probs = mesh.compute_stable_poses()
+    assert len(stable_poses) == len(probs)
+    # Find the most probable stable pose
+    i, value = max(enumerate(probs), key=operator.itemgetter(1))
+    best_pose = stable_poses[i]
+    # Visualize the mesh in the most probable stable state
+    rotation = np.asarray(best_pose[:3, :3])
+    translation = np.asarray(best_pose[:3, 3])
+    rt = RigidTransform(rotation, translation, from_frame='obj', to_frame='world')
+    # vis3d.mesh(mesh, rt)
+    # vis3d.show()
+    return best_pose, rt
 
 """ 3. Given the object in the stable pose, find the shadow of the convex hull. This is the bottom faces of the hull. """
 @profile
@@ -175,7 +207,7 @@ def best_cell(scores):
 
 """ Faster grid search """
 @profile
-def fast_grid_search(pc, indices, model, shadow, img_file):
+def fast_grid_search(pc, indices, model, shadow:
     length, width, height = shadow.extents
     split_size = max(length, width)
     pc_data, ind = get_pc_data(pc, indices)
@@ -303,6 +335,7 @@ def fine_grid_search(pc, indices, model, shadow, img_file):
     vis3d.points(rest, color=(1,0,1))
     vis3d.show()
     #--------
+    return best
 
 
 
@@ -321,7 +354,7 @@ def main():
     #vis3d.mesh(shadow, rt)
     #vis3d.show()
 
-    fine_grid_search(pc, indices, model, shadow, img_file)
+    fine_grid_search(pc, indices, model, shadow)
 
     print("--- %s seconds ---" % (time.time() - start_time))
 
