@@ -36,7 +36,7 @@ cp = RigidTransform.load(cp_file)
 #print("Camera pose:\n" + str(cp))
 
 """ 1. Given depth image of bin, retrieve largest planar surface """
-@profile
+#@profile
 def largest_planar_surface(filename):
     # Load the image as a numpy array and the camera intrinsics
     image = np.load(filename)
@@ -55,7 +55,7 @@ def largest_planar_surface(filename):
     indices, model = seg.segment()
     return indices, model, image, pc
 
-@profile
+#@profile
 def largest_planar_surface_di(di, ci, cp):
     di = DepthImage(image, frame=ci.frame)
     di = di.inpaint()
@@ -73,7 +73,7 @@ def largest_planar_surface_di(di, ci, cp):
 
 
 """ 2. Given an object mesh, find stable poses """
-@profile
+#@profile
 def find_stable_poses(mesh_file):
     # Load the mesh and compute stable poses
     mesh = trimesh.load(mesh_file)
@@ -90,7 +90,7 @@ def find_stable_poses(mesh_file):
     # vis3d.show()
     return mesh, best_pose, rt
 
-@profile
+#@profile
 def find_stable_poses_mesh(mesh):
     stable_poses, probs = mesh.compute_stable_poses()
     assert len(stable_poses) == len(probs)
@@ -106,7 +106,7 @@ def find_stable_poses_mesh(mesh):
     return best_pose, rt
 
 """ 3. Given the object in the stable pose, find the shadow of the convex hull. This is the bottom faces of the hull. """
-@profile
+#@profile
 def find_shadow(mesh, best_pose, plane_normal):
     #print("Plane normal = " + str(plane_normal))
     mesh = mesh.apply_transform(best_pose)
@@ -122,7 +122,7 @@ def find_shadow(mesh, best_pose, plane_normal):
     return shadow
 
 """ Restrict the data to be only the data within the bounds of the base of the bin (largest planar surface) """
-@profile
+#@profile
 def get_pc_data(pc, indices):
     pc_data = pc.data.T
     pc_plane = pc.data.T[indices]
@@ -133,7 +133,7 @@ def get_pc_data(pc, indices):
     return pc_data, all_indices
 
 """ Get all the data for points actually on the plane. """
-@profile
+#@profile
 def get_plane_data(pc, indices):
     pc_plane = pc.data.T[indices]
     mins = np.min(pc_plane, axis=0)
@@ -174,7 +174,7 @@ def transforms(pc, pc_data, shadow, minx, miny, maxx, maxy, n, original_tow):
     return transforms
 
 """ Find points under the shadow by rendering a binary mask of clutter. """
-@profile
+#@profile
 def under_shadow(scene, bin_bi):
     wd = scene.wrapped_render([RenderMode.DEPTH])[0]
     wd_bi = wd.to_binary()
@@ -200,14 +200,14 @@ def under_shadow(scene, bin_bi):
     return -1*score
 
 """ 6. Return the cell with the highest score """
-@profile
+#@profile
 def best_cell(scores):
     ind = np.unravel_index(np.argmax(scores, axis=None), scores.shape)
     return ind
 
 """ Faster grid search """
-@profile
-def fast_grid_search(pc, indices, model, shadow:
+#@profile
+def fast_grid_search(pc, indices, model, shadow):
     length, width, height = shadow.extents
     split_size = max(length, width)
     pc_data, ind = get_pc_data(pc, indices)
@@ -282,7 +282,7 @@ def fast_grid_search(pc, indices, model, shadow:
 
 
 """ Finer grid search """
-def fine_grid_search(pc, indices, model, shadow, img_file):
+def fine_grid_search(pc, indices, model, shadow):
     length, width, height = shadow.extents
     split_size = max(length, width)
     pc_data, ind = get_pc_data(pc, indices)
