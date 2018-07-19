@@ -57,7 +57,6 @@ def largest_planar_surface(filename):
 
 #@profile
 def largest_planar_surface_di(di, ci, cp):
-    di = DepthImage(image, frame=ci.frame)
     di = di.inpaint()
     pc = ci.deproject(di)
     pc = cp.apply(pc)
@@ -335,7 +334,7 @@ def fine_grid_search(pc, indices, model, shadow, splits):
     vis3d.points(rest, color=(1,0,1))
     vis3d.show()
     #--------
-    return best
+    return best, scene
 
 
 
