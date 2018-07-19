@@ -68,7 +68,7 @@ def largest_planar_surface_di(di, ci, cp):
     seg.set_method_type(pcl.SAC_RANSAC)
     seg.set_distance_threshold(0.005)
     indices, model = seg.segment()
-    return indices, model, image, pc
+    return indices, model, di, pc
 
 
 """ 2. Given an object mesh, find stable poses """
