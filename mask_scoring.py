@@ -282,7 +282,7 @@ def fast_grid_search(pc, indices, model, shadow):
 
 
 """ Finer grid search """
-def fine_grid_search(pc, indices, model, shadow):
+def fine_grid_search(pc, indices, model, shadow, splits):
     length, width, height = shadow.extents
     split_size = max(length, width)
     pc_data, ind = get_pc_data(pc, indices)
@@ -290,7 +290,7 @@ def fine_grid_search(pc, indices, model, shadow):
     mins = np.min(pc_data, axis=0)
     bin_base = mins[2]
     plane_normal = model[0:3]
-    splits = 3
+    #splits = 3
     step_size = split_size / splits
     
     plane_data = get_plane_data(pc, indices)
@@ -354,7 +354,7 @@ def main():
     #vis3d.mesh(shadow, rt)
     #vis3d.show()
 
-    fine_grid_search(pc, indices, model, shadow)
+    fine_grid_search(pc, indices, model, shadow, 3)
 
     print("--- %s seconds ---" % (time.time() - start_time))
 
